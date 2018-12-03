@@ -1,0 +1,390 @@
+\documentclass[final, xcolor=table]{beamer}
+\usetheme{FichaTecnica}
+\usepackage[orientation=portrait,size=a0,scale=1.4]{beamerposter}
+\usepackage{graphicx}
+\usepackage{booktabs  }
+\usepackage[spanish]{babel}
+\usepackage{amsmath,amsthm,amssymb,latexsym}
+\usepackage{booktabs}
+\usepackage{ragged2e}
+\graphicspath{{figures/}}
+
+<<Ini-1, include=FALSE, echo=FALSE, eval=TRUE>>=
+
+# -- ----------------------------------------------------------------------------------------- -- #
+# -- Inicializador general de sistema ------------------------------------------------ ETAPA 0 -- #
+# -- ----------------------------------------------------------------------------------------- -- #
+rm(list=ls())
+mdir <- getwd()
+
+# -- Establecer el sistema de medicion de la computadora
+Sys.setlocale(category = "LC_ALL", locale = "")
+
+# -- Huso horario
+Sys.setenv(tz="America/Monterrey", TZ="America/Monterrey")
+options(tz="America/Monterrey", TZ="America/Monterrey")
+
+# -- Cargar y/o instalar en automatico paquetes a utilizar -- #
+
+pkg <- c("base","downloader","dplyr","fBasics","forecast","grid",
+         "gridExtra","httr","jsonlite","lmtest","lubridate","moments",
+         "matrixStats", "PerformanceAnalytics","plyr","quantmod",
+         "reshape2","RCurl","RMySQL", "stats","scales","tseries",
+         "TTR","TSA","XML","xts","zoo")
+
+inst <- pkg %in% installed.packages()
+if(length(pkg[!inst]) > 0) install.packages(pkg[!inst])
+instpackages <- lapply(pkg, library, character.only=TRUE)
+
+# -- Cargar archivos desde GitHub -- #
+
+RawGitHub <- "https://raw.githubusercontent.com/IFFranciscoME/"
+ROandaAPI <- paste(RawGitHub,"ROandaAPI/master/ROandaAPI.R",sep="")
+downloader::source_url(ROandaAPI,prompt=FALSE,quiet=TRUE)
+
+# -- Parametros para usar API-OANDA
+
+# Tipo de cuenta practice/live
+OA_At <- "practice"
+# ID de cuenta
+OA_Ai <- 1742531
+# Token para llamadas a API
+OA_Ak <- "ada4a61b0d5bc0e5939365e01450b614-4121f84f01ad78942c46fc3ac777baa6" 
+# Hora a la que se considera "Fin del dia"
+OA_Da <- 17
+# Uso horario
+OA_Ta <- "America/Mexico_City"
+# Instrumento
+OA_In <- "USD_MXN"
+# Granularidad o periodicidad de los precios H4 = Cada 4 horas
+# S5, S10, S30, M1, 
+OA_Pr <- "D" #esto es lo unico que le puedes cambiarle
+# Multiplicador de precios para convertir a PIPS
+MultPip_MT1 <- 10000
+
+Precios_Oanda <- HisPrices(AccountType = OA_At, Granularity = OA_Pr,
+                           DayAlign = OA_Da, TimeAlign = OA_Ta, Token = OA_Ak,
+                           Instrument = OA_In, 
+                           Start = NULL, End = NULL, Count = 500)
+
+@
+
+<<Precios, include=FALSE, echo=FALSE, eval=TRUE, fig.height=6, fig.width=18>>=
+library(quantmod)
+
+Close <- xts(x = Precios_Oanda$Close, order.by = Precios_Oanda$TimeStamp)
+
+plot.xts(Close)
+
+
+#ESTADISTICOS
+
+###Bollinger Bands
+bbands.HLC <- BBands( Precios_Oanda[,c("High","Low","Close")] )
+bbands.close <- BBands( Precios_Oanda[,"Close"] )
+
+Historico <- data.frame("Date"= Precios_Oanda$TimeStamp,
+                 "Close"= Precios_Oanda$Close,
+                 "dn"= bbands.close[,1],
+                 "up"= bbands.close[,3])
+
+
+comprar <- 0
+vender <- 0
+mantener <- 0
+for (i in 20:length(Historico$Date)){
+  
+  if(Historico$Close[i]< Historico$dn[i]){
+    comprar<- comprar +1
+  }
+  else if (Historico$Close[i]> Historico$dn[i]){
+    vender <- vender +1
+  }
+  else{
+    mantener <- mantener + 1
+  }
+}
+
+###SMA
+sma.20 <- SMA(Precios_Oanda[,"Close"], 20)
+plot.ts(sma.20)
+
+
+###EMA
+ema.20 <- EMA(Precios_Oanda[,"Close"], 20)
+plot.ts(ema.20)
+
+###ALMA
+dema <- DEMA(Precios_Oanda[,"Close"])
+plot.ts(dema)
+
+###WMA
+wma <- WMA(Precios_Oanda[,"Close"], 20)
+plot.ts(wma)
+
+###RSI
+price <- Precios_Oanda[,"Close"]
+rsi <- RSI(price)
+@
+
+<<HistogramaP, include=FALSE, echo=FALSE, eval=TRUE, fig.width=8>>=
+hist(dailyReturn(Close), main = "Histograma de Rendimientos", xlab = "Rendimiento",ylab = "Frecuencia", col ="grey",xlim=c(-0.02,0.02))
+@
+
+<<Stochastic, include=FALSE, echo=FALSE, eval=TRUE>>=
+stochOSC <- stoch(Precios_Oanda[,c("High","Low","Close")])
+stochWPR <- WPR(Precios_Oanda[,c("High","Low","Close")])
+plot(tail(stochOSC[,"fastK"], 100), type="l",
+     main="Fast %K and Williams %R", ylab="",
+     ylim=range(cbind(stochOSC, stochWPR), na.rm=TRUE) )
+lines(tail(stochWPR, 100), col="blue")
+lines(tail(1-stochWPR, 100), col="red", lty="dashed")
+stoch2MA <- stoch( Precios_Oanda[,c("High","Low","Close")],
+                   maType=list(list(SMA), list(EMA, wilder=TRUE), list(SMA)) )
+SMI3MA <- SMI(Precios_Oanda[,c("High","Low","Close")],
+              maType=list(list(SMA), list(EMA, wilder=TRUE), list(SMA)) )
+stochRSI <- stoch( RSI(Precios_Oanda[,"Close"]) )
+@
+
+<<MACD, include=FALSE, echo=FALSE, eval=TRUE>>=
+chartSeries(
+  Close,
+  theme = chartTheme("white"),
+  TA = c(addMACD(fast = 12, slow = 26, signal = 9, type = "SMA"))
+)
+
+@
+
+<<Bollinger_RSI, include=FALSE, echo=FALSE, eval=TRUE>>=
+chartSeries(
+  Close,
+  theme = chartTheme("white"),
+  TA = c(addBBands())
+)
+@
+
+
+<<RSI, include=FALSE, echo=FALSE, eval=TRUE>>=
+chartSeries(
+  Close,
+  theme = chartTheme("white"),
+  TA = c(addTA(RSI(Close)))
+)
+Hist <- data.frame("Date"= Precios_Oanda$TimeStamp,
+                        "RSI"= rsi)
+
+
+Sobrevendido <- 0
+Sobrecomprado <- 0
+
+for (i in 15:length(Hist$Date)){
+  
+  if(Hist$RSI[i]> 70){
+    Sobrevendido<- Sobrevendido +1
+  }
+  else if (Hist$RSI[i]<30){
+    Sobrecomprado <- Sobrecomprado +1
+  }
+  
+}
+@
+
+
+<<SMA, include=FALSE, echo=FALSE, eval=TRUE>>=
+library(tidyquant)
+
+Candle <- ggplot(data=`Precios_Oanda`, aes(x=TimeStamp, y=Close)) +
+  geom_candlestick(aes(open=Open, high=High, low=Low, close=Close), na.rm = TRUE,
+                   color_up = "darkgreen", color_down = "darkred",  fill_up  = "darkgreen", fill_down  = "darkred")+
+  geom_ma(ma_fun = SMA, n = 21, linetype = 5, size = 1.25) +
+  labs(title = "USD/MXN, 21 day simple moving average",y="Closing Price", x="Date") +
+  theme_tq()
+Candle
+
+Bar <- ggplot(data=`Precios_Oanda`, aes(x=TimeStamp, y=Close)) +
+  geom_barchart(aes(open=Open, high=High, low=Low, close=Close), na.rm = TRUE,
+                color_up = "darkblue", color_down = "darkred", size = 1)  
+labs(title = "USD/MXN",y="Closing Price", x="TimeStamp") + 
+  theme_tq()
+Bar
+@
+
+<<EMA, include=FALSE, echo=FALSE, eval=TRUE>>=
+library(tidyquant)
+
+Candle <- ggplot(data=`Precios_Oanda`, aes(x=TimeStamp, y=Close)) +
+  geom_candlestick(aes(open=Open, high=High, low=Low, close=Close), na.rm = TRUE,
+                   color_up = "darkgreen", color_down = "darkred",  fill_up  = "darkgreen", fill_down  = "darkred")+
+  geom_ma(ma_fun = EMA, n = 21, linetype = 5, size = 1.25) +
+  labs(title = "USD/MXN, 21 day exponential moving average",y="Closing Price", x="Date") +
+  theme_tq()
+Candle
+@
+
+<<WMA, include=FALSE, echo=FALSE, eval=TRUE>>=
+library(tidyquant)
+
+Candle <- ggplot(data=`Precios_Oanda`, aes(x=TimeStamp, y=Close)) +
+  geom_candlestick(aes(open=Open, high=High, low=Low, close=Close), na.rm = TRUE,
+                   color_up = "darkgreen", color_down = "darkred",  fill_up  = "darkgreen", fill_down  = "darkred")+
+  geom_ma(ma_fun = WMA, n = 21, linetype = 5, size = 1.25) +
+  labs(title = "USD/MXN, 21 day weighted moving average",y="Closing Price", x="Date") +
+  theme_tq()
+Candle
+@
+
+<<DEMA, include=FALSE, echo=FALSE, eval=TRUE>>=
+library(tidyquant)
+
+Candle <- ggplot(data=`Precios_Oanda`, aes(x=TimeStamp, y=Close)) +
+  geom_candlestick(aes(open=Open, high=High, low=Low, close=Close), na.rm = TRUE,
+                   color_up = "darkgreen", color_down = "darkred",  fill_up  = "darkgreen", fill_down  = "darkred")+
+  geom_ma(ma_fun = DEMA, n = 21, linetype = 5, size = 1.25) +
+  labs(title = "USD/MXN, 21 day double exponential moving average",y="Closing Price", x="Date") +
+  theme_tq()
+Candle
+@
+
+% -- -------------------------------------------------------------------------------------------- %
+  %	-- TITLE SECTION 
+% -- -------------------------------------------------------------------------------------------- %
+  
+  \title{\Huge Proyecto Tradding}
+\institute{\Large ITESO}
+
+% -- -------------------------------------------------------------------------------------------- %
+  %	-- FOOTER TEXT
+% -- -------------------------------------------------------------------------------------------- %
+  
+  \newcommand{\leftfoot}{Official Web Page:}
+\newcommand{\rightfoot}{More Info: }
+
+% -- -------------------------------------------------------------------------------------------- %
+  \begin{document}
+%\SweaveOpts{concordance=TRUE}
+
+\title{Algoritmo Tipo de cambio USD/MXN}
+\begin{frame}
+
+\begin{columns}[t]
+\begin{column}{.61 \linewidth}
+\begin{block}{\small Precios } 
+\begin{figure}[H]\centering
+\includegraphics[scale = 1]{figure/Precios-1.pdf}\hfill
+\end{figure}
+\end{block}
+\end{column}
+
+ \begin{column}{.35 \linewidth}
+ \begin{block}{\small Rendimientos }
+ \begin{figure}[H]\centering
+ \includegraphics[scale = 1.18]{figure/HistogramaP-1.pdf}\hfill
+ \end{figure}
+ \end{block}
+ \end{column}
+
+\end{columns}
+
+\begin{columns}[t]
+\begin{column}{.48 \linewidth}
+\begin{block}{\small Stochastic Oscillator }
+\begin{figure}[H]\centering
+\includegraphics[scale = 1.18]{figure/Stochastic-1.pdf}\hfill
+\end{figure}
+\end{block}
+\end{column}
+
+\begin{column}{.30 \linewidth}
+\begin{block}{\small MACD }
+\begin{figure}[H]\centering
+\includegraphics[scale = 1.18]{figure/MACD-1.pdf}\hfill
+\end{figure}
+\end{block}
+\end{column}
+
+\begin{column}{.18 \linewidth}
+\begin{block}{\small {Interpretaci\'on}}
+\begin{itemize}
+  \item Divergencia MACD: positiva\\
+  \item Movimiento: alza\\
+  \item Se\~{n}al: compra\\
+  \end{itemize}
+
+\end{block}
+\end{column}
+
+\end{columns}
+
+\begin{columns}[t]
+\begin{column}{.30 \linewidth}
+\begin{block}{\small Bollinger Bands}
+\begin{figure}[H]\centering
+\includegraphics[scale = 1.18]{figure/Bollinger_RSI-1.pdf}\hfill
+\end{figure}
+\end{block}
+\end{column}
+
+\begin{column}{.18 \linewidth}
+\begin{block}{\small Se\~{n}ales}
+\begin{itemize}
+  \item Comprar: 38/500\\
+  \item Vender: 42/500\\
+  \item Mantener: 411/500\\
+  \end{itemize}
+
+\end{block}
+\end{column}
+
+\begin{column}{.30 \linewidth}
+\begin{block}{\small RSI}
+\begin{figure}[H]\centering
+\includegraphics[scale = 1.18]{figure/RSI-1.pdf}\hfill
+\end{figure}
+\end{block}
+\end{column}
+
+\begin{column}{.18 \linewidth}
+\begin{block}{\small Resultados}
+\begin{itemize}
+  \item Sobrecomprado: \Sexpr{Sobrecomprado}\\
+  \item Sobrevendido: \Sexpr{Sobrevendido}\\
+  \end{itemize}
+
+\end{block}
+\end{column}
+\end{columns}
+
+
+\begin{columns}[t]
+\begin{column}{.32 \linewidth}
+\begin{block}{\small Simple Moving Average}
+\begin{figure}[H]\centering
+\includegraphics[scale = 1.18]{figure/SMA-1.pdf}\hfill
+\end{figure}
+\end{block}
+\end{column}
+
+\begin{column}{.32 \linewidth}
+\begin{block}{\small Exponential Moving Average}
+\begin{figure}[H]\centering
+\includegraphics[scale = 1.18]{figure/EMA-1.pdf}\hfill
+\end{figure}
+\end{block}
+\end{column}
+
+\begin{column}{.32 \linewidth}
+\begin{block}{\small Weighted Moving Average}
+\begin{figure}[H]\centering
+\includegraphics[scale = 1.18]{figure/WMA-1.pdf}\hfill
+\end{figure}
+\end{block}
+\end{column}
+
+\end{columns}
+
+
+
+
+\end{frame}
+
+\end{document}
